@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String          @id @default(uuid())
+  googleId  String          @unique
+  name      String
+  email     String          @unique
+  avatar    String?
+  createdAt DateTime        @default(now())
+  campaigns EmailCampaign[]
+
+  @@map("users")
+}
+
+model EmailCampaign {
+  id              String         @id @default(uuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject         String
+  body            String         @db.Text
+  senderEmail     String
+  startTime       DateTime
+  delayBetweenMs  Int
+  hourlyLimit     Int
+  totalRecipients Int
+  status          CampaignStatus @default(active)
+  createdAt       DateTime       @default(now())
+  jobs            EmailJob[]
+
+  @@index([userId])
+  @@map("email_campaigns")
+}
+
+model EmailJob {
+  id             String        @id @default(uuid())
+  campaignId     String
+  campaign       EmailCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipientEmail String
+  scheduledFor   DateTime
+  sentAt         DateTime?
+  status         JobStatus     @default(scheduled)
+  bullmqJobId    String?
+  attempts       Int           @default(0)
+  error          String?       @db.Text
+  createdAt      DateTime      @default(now())
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@map("email_jobs")
+}
+
+enum CampaignStatus {
+  active
+  completed
+}
+
+enum JobStatus {
+  scheduled
+  sent
+  failed
+}
