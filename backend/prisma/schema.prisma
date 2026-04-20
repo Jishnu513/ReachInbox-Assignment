@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -27,7 +27,7 @@ model EmailCampaign {
   userId          String
   user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   subject         String
-  body            String         @db.Text
+  body            String
   senderEmail     String
   startTime       DateTime
   delayBetweenMs  Int
@@ -51,7 +51,7 @@ model EmailJob {
   status         JobStatus     @default(scheduled)
   bullmqJobId    String?
   attempts       Int           @default(0)
-  error          String?       @db.Text
+  error          String?
   createdAt      DateTime      @default(now())
 
   @@index([campaignId])
