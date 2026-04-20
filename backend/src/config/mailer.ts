@@ -9,6 +9,12 @@ export const transporter = nodemailer.createTransport({
     user: env.ETHEREAL_EMAIL,
     pass: env.ETHEREAL_PASS,
   },
+  connectionTimeout: 60000,  // 60s — Railway containers can be slow to reach external SMTP
+  greetingTimeout: 30000,
+  socketTimeout: 60000,
+  tls: {
+    rejectUnauthorized: false, // allow self-signed certs in cloud envs
+  },
 });
 
 export interface SendEmailOptions {
