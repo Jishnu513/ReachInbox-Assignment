@@ -1,278 +1,215 @@
-# ReachInbox — Full-Stack Email Job Scheduler
+# ReachInbox — Email Job Scheduler
 
-A production-grade email scheduling service built as part of the Outbox Labs SDE Internship assignment.
+A full-stack email scheduling system built for the Outbox Labs SDE Internship assignment.
 
----
-
-## 🏗 Architecture Overview
-
-```
-Frontend (Next.js :3000)
-    │  Google OAuth redirect → backend
-    │  JWT stored in localStorage
-    │  REST API calls with Authorization: Bearer header
-    ▼
-Backend (Express :4000)
-    │
-    ├── Google OAuth (Passport.js) → issues JWT
-    ├── POST /api/emails/schedule
-    │     ├── Validate input (Zod)
-    │     ├── Create EmailCampaign in MySQL
-    │     ├── For each recipient[i]:
-    │     │     scheduledFor = startTime + i * delayBetweenMs
-    │     │     Create EmailJob in MySQL
-    │     │     Enqueue BullMQ delayed job (delay = scheduledFor - now)
-    │     └── Return campaign summary
-    │
-    └── GET /api/emails/scheduled|sent (filtered by userId, paginated)
-
-Redis (BullMQ persistence)
-    └── Delayed job fires at scheduledFor (survives restarts)
-              ▼
-         BullMQ Worker (concurrency=5)
-              ├── Idempotency: check DB status → skip if already 'sent'
-              ├── Rate limit: Redis Lua atomic check (ratelimit:{email}:{hourWindow})
-              │     └── If exceeded → re-enqueue to next hour (NOT failed)
-              ├── Send via Ethereal SMTP (nodemailer)
-              └── Update EmailJob status → 'sent' / 'failed'
-
-MySQL (source of truth)
-    └── users → email_campaigns → email_jobs
-```
+The idea is simple: you upload a list of email recipients, set a start time and some scheduling rules, and the system handles the rest — even if the server goes down and comes back up.
 
 ---
 
-## ⚙️ How Scheduling Works
+## What I built
 
-1. User composes email, uploads CSV, sets start time + delay + hourly limit
-2. Backend creates one `email_campaigns` row and one `email_jobs` row per recipient
-3. Each recipient gets `scheduledFor = startTime + index * delayBetweenMs`
-4. BullMQ job is enqueued with `delay = scheduledFor - Date.now()`
-5. BullMQ stores jobs in Redis sorted sets — **persists across server restarts**
-6. When a job fires, the worker checks DB status (idempotency) then sends the email
+At its core, this is a **persistent job queue** for email delivery. Not a simple "send email on button click" — but an actual scheduling engine where:
 
----
+- Each recipient gets their own delayed job in BullMQ
+- Jobs survive server restarts because they live in Redis, not memory
+- A configurable hourly rate limit is enforced atomically (using a Redis Lua script so it works even with multiple concurrent workers)
+- If the rate limit is exceeded, emails are rescheduled to the next hour automatically — they don't fail
+- The frontend gives you a live dashboard showing what's scheduled, what's been sent, and what failed
 
-## 🔄 Persistence on Restart
-
-- BullMQ delayed jobs are stored in Redis sorted sets, **not in memory**
-- Restarting the server does **not** re-enqueue jobs — they're already in Redis
-- Worker resumes processing automatically on startup
-- DB records serve as the source of truth; worker checks status before sending
+I also added Google OAuth for login because a multi-user system needs some form of identity — each user only sees their own campaigns.
 
 ---
 
-## 🚦 Rate Limiting
+## Tech choices and why
 
-- Each job checks a Redis counter keyed by `ratelimit:{senderEmail}:{hourWindow}`
-- Lua script atomically checks and increments — **safe across multiple workers**
-- If limit is exceeded: job is **re-enqueued** into the next hour window (not dropped or failed)
-- Two limits enforced:
-  - **UI-provided `hourlyLimit`** (per campaign, set by user)
-  - **Server-side max** `MAX_EMAILS_PER_HOUR_PER_SENDER` env var (ceiling)
-  - Effective limit = `min(hourlyLimit, MAX_EMAILS_PER_HOUR_PER_SENDER)`
+**Backend: Node.js + Express + TypeScript**  
+TypeScript saved me from a lot of silly bugs. The added compile-time safety is worth the setup cost, especially for something with this many moving parts.
 
----
+**BullMQ + Redis**  
+The assignment explicitly said "no cron jobs." BullMQ stores delayed jobs in Redis sorted sets — so if you restart the server, jobs are still sitting there waiting, and the worker picks them back up automatically.
 
-## ⚡ Concurrency & Delay
+**MySQL + Prisma**  
+I needed a relational database because campaigns and email jobs have a real relationship. Prisma gave me type-safe queries without having to write raw SQL everywhere.
 
-- **Worker concurrency**: `WORKER_CONCURRENCY` env var (default: 5 parallel jobs)
-- **Per-email delay**: computed at enqueue time as `startTime + i * delayBetweenMs`
-  - Each recipient gets their own independent BullMQ delayed job
-  - No global queue limiter needed — delays are pre-calculated per recipient
-- **Documented default**: 2 seconds between emails (`delayBetweenMs: 2000`)
+**Nodemailer + Ethereal**  
+Ethereal is a fake SMTP service that lets you "send" emails and preview them in a real inbox. No actual emails go out, which is ideal for a demo. I used static credentials (not `createTestAccount()` on startup) so the Ethereal inbox stays consistent across server restarts.
 
----
+**Next.js + Tailwind CSS**  
+Tailwind made it fast to build a clean UI without writing a ton of custom CSS. Next.js App Router handled routing cleanly.
 
-## 🔁 Idempotency
-
-- Each BullMQ job uses `emailJob.id` as its BullMQ `jobId` — prevents duplicate enqueue
-- Worker checks `emailJob.status === 'sent'` before sending — skips if already done
-- Safe for worker restarts, retries, and concurrent workers
+**PapaParse**  
+Client-side CSV parsing. The user uploads a CSV, we extract the email column in the browser, show a preview, and only send the data to the backend when they click Schedule.
 
 ---
 
-## 🔁 Retry Strategy
+## How scheduling works
 
-- 3 attempts per job, exponential backoff: 5s → 10s → 20s
-- After all attempts fail: job is marked `failed` in DB with error message
-- Rate-limited jobs are rescheduled (not counted as failed attempts)
+When you hit "Schedule":
 
----
+1. The backend creates one `email_campaigns` row in MySQL
+2. For each recipient, it creates one `email_jobs` row
+3. For each job, it calculates: `scheduledFor = startTime + (index × delayBetweenMs)`
+4. A BullMQ delayed job is enqueued with `delay = scheduledFor - Date.now()`
+5. BullMQ stores everything in Redis
 
-## 📦 Features Implemented
-
-### Backend
-- [x] Express.js + TypeScript server
-- [x] BullMQ delayed jobs (no cron jobs)
-- [x] Redis persistence across restarts
-- [x] MySQL (Prisma) — users, email_campaigns, email_jobs
-- [x] Configurable worker concurrency
-- [x] Per-recipient delay calculation
-- [x] Redis Lua atomic rate limiting (per sender per hour)
-- [x] Rate-exceeded jobs rescheduled to next hour
-- [x] Idempotency check before each send
-- [x] 3-attempt retry with exponential backoff
-- [x] Ethereal Email SMTP (static credentials)
-- [x] Google OAuth (Passport.js) + JWT
-- [x] All endpoints scoped to authenticated user
-- [x] Pagination on list endpoints
-
-### Frontend
-- [x] Google OAuth login
-- [x] User avatar + name + email in sidebar
-- [x] Logout
-- [x] Scheduled Emails table (loading skeleton + empty state)
-- [x] Sent Emails table (loading skeleton + empty state)
-- [x] Compose modal with CSV/text upload
-- [x] Client-side email parsing (PapaParse + regex)
-- [x] Email count preview before submit
-- [x] Start time, delay, hourly limit inputs
-- [x] Campaign summary before scheduling
-- [x] Toast notifications
-- [x] Auto-refresh every 15 seconds
-- [x] TypeScript types for all API responses
-- [x] Pagination on tables
+When the timer fires, the worker:
+1. Checks if the job was already sent (idempotency — won't send twice)
+2. Checks the rate limit via Redis Lua script
+3. Sends the email if allowed, or reschedules to next hour if rate-limited
+4. Updates the DB status to `sent` or `failed`
 
 ---
 
-## 🛠 Setup Instructions
+## Surviving server restarts
 
-### Prerequisites
-- Node.js 18+
-- Docker Desktop (for Redis + MySQL)
+This was the trickiest part to get right. The key insight is that BullMQ's delayed jobs live in Redis, not in application memory. So restarting the Node.js process doesn't wipe any pending jobs.
 
-### 1. Clone and configure
+When the server restarts:
+- The worker reconnects to Redis
+- Pending jobs are still in the queue with their original timestamps
+- Everything processes normally
 
-```bash
-git clone <your-repo-url>
-cd ReachInbox
-```
-
-### 2. Get Ethereal Email credentials (one-time)
-
-```bash
-node -e "require('nodemailer').createTestAccount().then(a => console.log(JSON.stringify(a, null, 2)))"
-```
-
-Copy `user` → `ETHEREAL_EMAIL` and `pass` → `ETHEREAL_PASS`.
-
-### 3. Set up backend environment
-
-```bash
-cd backend
-cp .env.example .env
-# Edit .env with your values:
-# - GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (from Google Cloud Console)
-# - JWT_SECRET (any random string)
-# - ETHEREAL_EMAIL / ETHEREAL_PASS (from step 2)
-```
-
-### 4. Set up frontend environment
-
-```bash
-cd frontend
-cp .env.example .env.local
-# NEXT_PUBLIC_API_URL=http://localhost:4000 (already set)
-```
-
-### 5. Start Redis + MySQL
-
-```bash
-# From project root
-docker-compose up -d
-```
-
-### 6. Install dependencies + migrate DB
-
-```bash
-# Backend
-cd backend
-npm install
-npm run db:push   # applies Prisma schema to MySQL
-
-# Frontend
-cd ../frontend
-npm install
-```
-
-### 7. Run backend
-
-```bash
-cd backend
-npm run dev
-# → http://localhost:4000
-```
-
-### 8. Run frontend
-
-```bash
-cd frontend
-npm run dev
-# → http://localhost:3000
-```
-
-### 9. Google OAuth Setup
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create OAuth 2.0 credentials (Web application)
-3. Add authorized redirect URI: `http://localhost:4000/api/auth/google/callback`
-4. Copy Client ID + Secret to backend `.env`
+I also made sure each BullMQ job uses the `emailJob.id` from MySQL as its job ID. That way, even if a job somehow gets enqueued twice, BullMQ deduplicates it.
 
 ---
 
-## 📁 Project Structure
+## Rate limiting
+
+Each sender gets a counter in Redis keyed by `ratelimit:{email}:{hourWindow}`.
+
+I used a Lua script to check and increment atomically:
+
+```lua
+local current = tonumber(redis.call('GET', key) or '0')
+if current >= limit then
+  return 0  -- denied
+end
+redis.call('INCR', key)
+redis.call('EXPIREAT', key, expireAt)
+return 1  -- allowed
+```
+
+This matters because without atomicity, two workers running in parallel could both read the same count, both decide "we're under the limit," and both send — exceeding the limit. The Lua script prevents that.
+
+The effective limit is always `min(user-set limit, MAX_EMAILS_PER_HOUR_PER_SENDER)` from env.
+
+---
+
+## Project structure
 
 ```
 ReachInbox/
 ├── backend/
-│   ├── prisma/schema.prisma        # DB schema
+│   ├── prisma/schema.prisma        ← 3 tables: users, email_campaigns, email_jobs
 │   ├── src/
-│   │   ├── config/                 # env, redis, mailer, database
-│   │   ├── queues/                 # BullMQ queue + worker
-│   │   ├── routes/                 # auth, emails
-│   │   ├── middleware/             # requireAuth, errorHandler
-│   │   ├── services/               # schedulerService, rateLimitService
-│   │   └── index.ts
+│   │   ├── config/                 ← env validation, Redis, Prisma, Nodemailer
+│   │   ├── queues/                 ← BullMQ queue definition + worker
+│   │   ├── services/               ← scheduling logic + rate limiter
+│   │   ├── routes/                 ← auth (Google OAuth) + emails (schedule/list)
+│   │   ├── middleware/             ← JWT auth guard + error handler
+│   │   └── index.ts                ← Express app entry point
 │   └── package.json
+│
 ├── frontend/
 │   ├── src/
-│   │   ├── app/                    # Next.js App Router pages
-│   │   ├── components/             # UI components
-│   │   ├── context/                # AuthContext
-│   │   └── lib/                    # types, api client, utils
+│   │   ├── app/                    ← Login, Dashboard, /auth/callback pages
+│   │   ├── components/             ← Sidebar, ComposeModal, tables, skeletons
+│   │   ├── context/                ← AuthContext (JWT management)
+│   │   └── lib/                    ← API client, TypeScript types, utils
 │   └── package.json
-├── docker-compose.yml
+│
+├── docker-compose.yml              ← MySQL 8 + Redis 7
 └── README.md
 ```
 
 ---
 
-## 🧪 Testing Rate Limiting
+## Running it locally
 
+**Prerequisites:** Node.js 18+, Docker Desktop
+
+**1. Start infrastructure**
 ```bash
-# Set low limit in backend/.env
-MAX_EMAILS_PER_HOUR_PER_SENDER=2
-
-# Schedule 5 emails immediately
-# First 2 will send this hour, next 3 are rescheduled to next hour
+docker-compose up -d
 ```
 
-## Demo Video Checklist
+**2. Set up backend**
+```bash
+cd backend
+cp .env.example .env
+# Fill in GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and Ethereal credentials
+# Everything else (DB URL, Redis URL, JWT secret) is already set in .env.example
+npm install
+npm run db:push
+npm run dev
+```
 
-- [ ] Login with Google → dashboard appears
-- [ ] Upload CSV → Compose modal shows email count
-- [ ] Schedule campaign → Scheduled tab populates
-- [ ] Wait → emails move to Sent tab
-- [ ] Stop backend → restart → pending emails still send
-- [ ] (Bonus) Set low rate limit → rescheduling behavior shown
+**3. Get Ethereal credentials** (one-time setup)
+```bash
+node -e "require('nodemailer').createTestAccount().then(a => console.log(a.user, a.pass))"
+```
+Copy the output into `ETHEREAL_EMAIL` and `ETHEREAL_PASS` in `.env`.
+
+**4. Set up frontend**
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+**5. Google OAuth**
+- Go to [Google Cloud Console](https://console.cloud.google.com) → Create OAuth 2.0 credentials
+- Add redirect URI: `http://localhost:4000/api/auth/google/callback`
+- Copy client ID + secret into `backend/.env`
+
+Now open `http://localhost:3000`.
 
 ---
 
-## Trade-offs & Assumptions
+## API overview
 
-- **Sender = Google user email**: One SMTP sender per logged-in user (sufficient for assignment scope)
-- **Static Ethereal credentials**: Required for restart-survival demo (no `createTestAccount()` on startup)
-- **Per-recipient BullMQ delay**: Cleaner than global queue limiter; honors per-campaign delay settings
-- **JWT in localStorage**: Standard for SPAs; HttpOnly cookie would be better in production
-- **Auto-refresh 15s**: Balances real-time feel vs API load; WebSockets would be ideal at scale
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/auth/google` | Start Google OAuth flow |
+| GET | `/api/auth/google/callback` | OAuth callback → issues JWT |
+| GET | `/api/auth/me` | Get current user |
+| POST | `/api/emails/schedule` | Create campaign + enqueue jobs |
+| GET | `/api/emails/scheduled` | List pending jobs (paginated) |
+| GET | `/api/emails/sent` | List sent/failed jobs (paginated) |
+| GET | `/api/emails/counts` | Counts for sidebar badges |
+| GET | `/api/health` | Health check |
+
+---
+
+## Testing the key behaviors
+
+**Restart survival:**
+1. Schedule a campaign 5 minutes from now
+2. Stop the backend (`Ctrl+C`)
+3. Restart it (`npm run dev`)
+4. Emails still send at the scheduled time
+
+**Rate limiting:**
+1. Set `MAX_EMAILS_PER_HOUR_PER_SENDER=2` in `.env`
+2. Schedule 5 emails immediately
+3. First 2 send, remaining 3 get rescheduled to next hour
+
+**Viewing sent emails:**
+Go to [ethereal.email](https://ethereal.email) and log in with your Ethereal credentials.
+
+---
+
+## Decisions I made and why
+
+**Static Ethereal credentials instead of `createTestAccount()`**  
+If you generate a new Ethereal account every time the server starts, your preview inbox changes. Emails sent before a restart would go to a different inbox than ones sent after. Static credentials keep everything in one place.
+
+**Per-recipient BullMQ jobs instead of one loop per campaign**  
+If I had one job per campaign that loops through all recipients, a single SMTP failure would block the whole campaign. With individual jobs, each recipient can retry independently without affecting others.
+
+**JWT in localStorage**  
+Standard approach for SPAs. An HttpOnly cookie would be slightly more secure in production, but for this assignment scope, localStorage + Bearer token is the right call.
+
+**15-second polling instead of WebSockets**  
+Simple and reliable for a demo. WebSockets would be better at scale, but overkill here.
