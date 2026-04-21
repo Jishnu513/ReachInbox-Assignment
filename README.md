@@ -6,6 +6,16 @@ The idea is simple: you upload a list of email recipients, set a start time and 
 
 ---
 
+## 🔗 Live Links
+
+| | Link |
+|---|---|
+| 🌐 **Live App** | [https://reach-inbox-assignment-ten.vercel.app](https://reach-inbox-assignment-ten.vercel.app) |
+| 🎬 **Demo Video** | [https://www.loom.com/share/53470bc23e144e4ca1bb500ffecb0365](https://www.loom.com/share/53470bc23e144e4ca1bb500ffecb0365) |
+| ⚙️ **Backend API** | [https://reachinbox-assignment-production-ad48.up.railway.app](https://reachinbox-assignment-production-ad48.up.railway.app) |
+
+---
+
 ## What I built
 
 At its core, this is a **persistent job queue** for email delivery. Not a simple "send email on button click" — but an actual scheduling engine where:
