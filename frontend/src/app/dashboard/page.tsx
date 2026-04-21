@@ -41,8 +41,8 @@ export default function DashboardPage() {
     }
   }, [user, authLoading, router]);
 
-  const loadScheduled = useCallback(async (page = 1) => {
-    setScheduledLoading(true);
+  const loadScheduled = useCallback(async (page = 1, silent = false) => {
+    if (!silent) setScheduledLoading(true);
     try {
       const res = await getScheduledEmails(page);
       setScheduledJobs(res.data);
@@ -51,12 +51,12 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Failed to load scheduled emails:', err);
     } finally {
-      setScheduledLoading(false);
+      if (!silent) setScheduledLoading(false);
     }
   }, []);
 
-  const loadSent = useCallback(async (page = 1) => {
-    setSentLoading(true);
+  const loadSent = useCallback(async (page = 1, silent = false) => {
+    if (!silent) setSentLoading(true);
     try {
       const res = await getSentEmails(page);
       setSentJobs(res.data);
@@ -65,7 +65,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Failed to load sent emails:', err);
     } finally {
-      setSentLoading(false);
+      if (!silent) setSentLoading(false);
     }
   }, []);
 
@@ -80,7 +80,8 @@ export default function DashboardPage() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadScheduled(scheduledPage), loadSent(sentPage), loadCounts()]);
+    // silent=true → no loading skeleton flicker during background refresh
+    await Promise.all([loadScheduled(scheduledPage, true), loadSent(sentPage, true), loadCounts()]);
     setRefreshing(false);
   }, [loadScheduled, loadSent, loadCounts, scheduledPage, sentPage]);
 
