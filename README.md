@@ -223,3 +223,6 @@ Standard approach for SPAs. An HttpOnly cookie would be slightly more secure in 
 
 **15-second polling instead of WebSockets**  
 Simple and reliable for a demo. WebSockets would be better at scale, but overkill here.
+
+**MOCK_EMAIL=true in production deployment**  
+Railway (and most cloud providers) block outbound SMTP port 587, which Ethereal uses. In the live Railway deployment, `MOCK_EMAIL=true` is set — the scheduling, queueing, rate limiting, idempotency, and DB persistence all run exactly the same, but the final SMTP call is simulated. In local development, real Ethereal SMTP is used and emails can be previewed at ethereal.email. This is an honest trade-off for cloud deployment.
