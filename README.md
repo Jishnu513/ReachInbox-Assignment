@@ -12,7 +12,7 @@ The idea is simple: you upload a list of email recipients, set a start time and 
 |---|---|
 | 🌐 **Live App** | [https://reach-inbox-assignment-ten.vercel.app](https://reach-inbox-assignment-ten.vercel.app) |
 | 🎬 **Demo Video** | [https://www.loom.com/share/53470bc23e144e4ca1bb500ffecb0365](https://www.loom.com/share/53470bc23e144e4ca1bb500ffecb0365) |
-| ⚙️ **Backend API** | [https://reachinbox-assignment-production-ad48.up.railway.app](https://reachinbox-assignment-production-ad48.up.railway.app) |
+| ⚙️ **Backend API** | [https://reachinbox-backend-9cfy.onrender.com](https://reachinbox-backend-9cfy.onrender.com) |
 
 ---
 
@@ -225,4 +225,4 @@ Standard approach for SPAs. An HttpOnly cookie would be slightly more secure in 
 Simple and reliable for a demo. WebSockets would be better at scale, but overkill here.
 
 **MOCK_EMAIL=true in production deployment**  
-Railway (and most cloud providers) block outbound SMTP port 587, which Ethereal uses. In the live Railway deployment, `MOCK_EMAIL=true` is set — the scheduling, queueing, rate limiting, idempotency, and DB persistence all run exactly the same, but the final SMTP call is simulated. In local development, real Ethereal SMTP is used and emails can be previewed at ethereal.email. This is an honest trade-off for cloud deployment.
+Render (and most cloud providers) block outbound SMTP port 587, which Ethereal uses. In the live Render deployment, `MOCK_EMAIL=true` is set — the scheduling, queueing, rate limiting, idempotency, and DB persistence all run exactly the same, but the final SMTP call is simulated. In local development, real Ethereal SMTP is used and emails can be previewed at ethereal.email. This is an honest trade-off for cloud deployment.
