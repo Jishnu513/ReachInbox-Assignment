@@ -54,15 +54,24 @@ app.use(errorHandler);
 
 async function bootstrap() {
   try {
-    // Test DB connection
-    await prisma.$connect();
+    // Test DB connection with timeout
+    await Promise.race([
+      prisma.$connect(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('DB connect timeout after 15s')), 15000)
+      ),
+    ]);
     console.log('✅ Database connected');
 
-    // Verify SMTP
+    // Verify SMTP (non-fatal — MOCK_EMAIL=true bypasses this in prod)
     await verifyMailer();
 
-    // Start BullMQ worker
-    startWorker();
+    // Start BullMQ worker (Redis errors here are non-fatal for HTTP serving)
+    try {
+      startWorker();
+    } catch (workerErr) {
+      console.error('⚠️ Worker failed to start (queue processing unavailable):', workerErr);
+    }
 
     const PORT = parseInt(env.PORT);
     app.listen(PORT, () => {
