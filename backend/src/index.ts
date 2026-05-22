@@ -54,17 +54,25 @@ app.use(errorHandler);
 
 async function bootstrap() {
   try {
-    // Test DB connection with timeout
-    await Promise.race([
-      prisma.$connect(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('DB connect timeout after 15s')), 15000)
-      ),
-    ]);
-    console.log('✅ Database connected');
+    // Test DB connection with timeout (non-fatal)
+    try {
+      await Promise.race([
+        prisma.$connect(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('DB connect timeout after 15s')), 15000)
+        ),
+      ]);
+      console.log('✅ Database connected');
+    } catch (dbErr) {
+      console.error('⚠️ Database failed to connect on startup (will retry on requests):', dbErr);
+    }
 
     // Verify SMTP (non-fatal — MOCK_EMAIL=true bypasses this in prod)
-    await verifyMailer();
+    try {
+      await verifyMailer();
+    } catch (mailerErr) {
+      console.error('⚠️ Mailer verification failed:', mailerErr);
+    }
 
     // Start BullMQ worker (Redis errors here are non-fatal for HTTP serving)
     try {

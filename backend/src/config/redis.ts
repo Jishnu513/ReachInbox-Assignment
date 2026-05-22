@@ -29,9 +29,15 @@ export function createRedisConnection() {
   const url = env.REDIS_URL;
   const isTLS = url.startsWith('rediss://');
 
-  return new Redis(url, {
+  const connection = new Redis(url, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     tls: isTLS ? { rejectUnauthorized: false } : undefined,
   });
+
+  connection.on('error', (err) => {
+    console.error('❌ Redis Connection Error (BullMQ):', err.message);
+  });
+
+  return connection;
 }

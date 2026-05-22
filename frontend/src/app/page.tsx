@@ -1,14 +1,49 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { getGoogleLoginUrl } from '@/lib/api';
-import { Mail, Zap, Clock, BarChart3 } from 'lucide-react';
+import { Mail, Zap, Clock, BarChart3, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+
+  useEffect(() => {
+    let active = true;
+    const checkHealth = async () => {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+        const res = await fetch(`${apiUrl}/api/health`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (res.ok && active) {
+          setBackendStatus('online');
+        } else if (active) {
+          setBackendStatus('offline');
+        }
+      } catch {
+        if (active) {
+          setBackendStatus('offline');
+        }
+      }
+    };
+    checkHealth();
+
+    // Check again every 8 seconds if not online
+    const interval = setInterval(() => {
+      if (backendStatus !== 'online') {
+        checkHealth();
+      }
+    }, 8000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [backendStatus]);
 
   useEffect(() => {
     if (!loading && user) {
@@ -82,6 +117,25 @@ export default function LoginPage() {
           </div>
 
           <div className="card p-8 shadow-lg">
+            {backendStatus === 'checking' && (
+              <div className="mb-6 p-3 bg-amber-50/80 border border-amber-200/60 rounded-xl text-amber-800 text-xs flex items-start gap-2.5 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping mt-1 flex-shrink-0" />
+                <div>
+                  <p className="font-semibold">Waking up backend server...</p>
+                  <p className="text-amber-600/95 mt-0.5">Render free-tier databases and APIs sleep after 15m of inactivity. Please wait up to a minute.</p>
+                </div>
+              </div>
+            )}
+            {backendStatus === 'offline' && (
+              <div className="mb-6 p-3 bg-rose-50/80 border border-rose-200/60 rounded-xl text-rose-800 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Backend is disconnected</p>
+                  <p className="text-rose-600/95 mt-0.5">Still attempting to connect. If this persists, the Render deployment may be rebuilding or updating.</p>
+                </div>
+              </div>
+            )}
+
             <h2 className="text-2xl font-bold text-gray-900 mb-1">Welcome back</h2>
             <p className="text-gray-500 text-sm mb-8">Sign in to access your email dashboard</p>
 
